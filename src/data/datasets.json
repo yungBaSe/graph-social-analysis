@@ -1,0 +1,48 @@
+{
+    "facebook": {
+        "url": "https://snap.stanford.edu/data/facebook_combined.txt.gz",
+        "filename": "facebook_combined.txt.gz",
+        "processed_name": "facebook_graph.pkl",
+        "description": "Social circles from Facebook (ego networks), 4039 nodes, 88234 edges",
+        "type": "gz"
+    },
+    "arxiv": {
+        "url": "https://snap.stanford.edu/data/ca-GrQc.txt.gz",
+        "filename": "ca-GrQc.txt.gz",
+        "processed_name": "arxiv_graph.pkl",
+        "description": "Collaboration network of Arxiv General Relativity, 5242 nodes, 14496 edges",
+        "type": "gz"
+    },
+    "lastfm": {
+        "url": "https://snap.stanford.edu/data/lastfm_asia.zip",
+        "filename": "lastfm_asia.zip",
+        "processed_name": "lastfm_graph.pkl",
+        "description": "LastFM Asia Social Network, 7624 nodes, 27806 edges",
+        "type": "zip",
+        "archive_name": "lastfm_asia_edges",
+        "extract_subdir": "lastfm"
+    },
+    "twitch_ru": {
+        "url": "https://snap.stanford.edu/data/twitch.zip",
+        "filename": "twitch.zip",
+        "processed_name": "twitch_ru_graph.pkl",
+        "description": "Twitch Gamers Social Network (Russian segment)",
+        "type": "zip",
+        "archive_name": "musae_RU_edges",
+        "extract_subdir": "twitch"
+    },
+    "twitter": {
+        "url": "https://snap.stanford.edu/data/twitter_combined.txt.gz",
+        "filename": "twitter_combined.txt.gz",
+        "processed_name": "twitter_graph.pkl",
+        "description": "Twitter social circles, 81306 nodes, 1768149 edges",
+        "type": "gz"
+    },
+    "gplus": {
+        "url": "https://snap.stanford.edu/data/gplus_combined.txt.gz",
+        "filename": "gplus_combined.txt.gz",
+        "processed_name": "gplus_graph.pkl",
+        "description": "Google+ social circles, 107614 nodes, 13673453 edges",
+        "type": "gz"
+    }
+}

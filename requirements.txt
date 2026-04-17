@@ -1,0 +1,28 @@
+# Core
+networkx>=3.0
+numpy>=1.24
+scipy>=1.10
+pandas>=2.0
+matplotlib>=3.7
+seaborn>=0.12
+tqdm>=4.65
+
+# Embeddings
+gensim>=4.3
+node2vec==0.4.6  # если получится установить, иначе заменить на gensim
+scikit-learn>=1.3
+
+# GraphSAGE (optional, requires torch)
+torch>=2.0
+# torch-geometric (optional, can be heavy)
+# stellargraph (not recommended for Python 3.9+)
+
+# Visualization
+# umap-learn (optional)
+
+# Community detection (optional)
+python-louvain>=0.16
+
+# Jupyter (for notebooks)
+jupyter
+ipykernel
