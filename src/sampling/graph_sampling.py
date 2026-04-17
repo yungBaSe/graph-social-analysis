@@ -542,6 +542,96 @@ def mhrw_sampling(
 
     return sample
 
+# ----------------------------- 7. Degree-Biased Sampling -----------------
+def degree_biased_sampling(
+    G: nx.Graph,
+    fraction: Optional[float] = None,
+    num_nodes: Optional[int] = None,
+    edge_prob_scale: float = 1.0,
+    seed: int = 42,
+    use_cache: bool = True,
+    graph_name: Optional[str] = None,
+) -> nx.Graph:
+    """
+    Degree-Biased Sampling: выбор топ-узлов по степени и вероятностное добавление рёбер.
+
+    Алгоритм:
+    1. Выбираются top-k узлов с наибольшей степенью.
+    2. Для каждого потенциального ребра между выбранными узлами:
+       вероятность добавления пропорциональна сумме степеней концов:
+       P(u,v) = min(1, edge_prob_scale * (deg(u) + deg(v)) / (2 * max_deg))
+
+    Параметры
+    ---------
+    G : nx.Graph
+        Исходный граф.
+    fraction : float, optional
+        Доля узлов для выбора.
+    num_nodes : int, optional
+        Точное число узлов для выбора.
+    edge_prob_scale : float
+        Множитель вероятности добавления ребра (по умолчанию 1.0).
+    seed : int
+        Сид для воспроизводимости.
+    use_cache : bool
+        Использовать кеширование.
+    graph_name : str, optional
+        Имя графа для включения в имя файла кеша.
+
+    Возвращает
+    -------
+    nx.Graph
+        Семпл, построенный по Degree-Biased алгоритму.
+    """
+    if fraction is None and num_nodes is None:
+        raise ValueError("Укажите fraction или num_nodes")
+    if num_nodes is None:
+        num_nodes = max(1, int(G.number_of_nodes() * fraction))
+    num_nodes = min(num_nodes, G.number_of_nodes())
+
+    params = {
+        'method': 'degree_biased',
+        'num_nodes': num_nodes,
+        'edge_prob_scale': edge_prob_scale,
+        'seed': seed,
+    }
+    if graph_name:
+        params['graph'] = graph_name
+    filepath = _get_sample_path("degree_biased", params)
+
+    if use_cache:
+        cached = _load_cached_sample(filepath)
+        if cached is not None:
+            print(f"📂 Загружен кешированный Degree-Biased семпл: {filepath.name}")
+            return cached
+
+    random.seed(seed)
+    np.random.seed(seed)
+
+    # Шаг 1: Выбор топ-k узлов по степени
+    nodes_by_degree = sorted(dict(G.degree()).items(), key=lambda x: x[1], reverse=True)
+    top_nodes = [node for node, _ in nodes_by_degree[:num_nodes]]
+    top_set = set(top_nodes)
+
+    # Шаг 2: Построение семпла с вероятностным добавлением рёбер
+    sample = nx.Graph()
+    sample.add_nodes_from(top_nodes)
+
+    max_deg = max(dict(G.degree()).values())
+    for i, u in enumerate(top_nodes):
+        for v in top_nodes[i+1:]:
+            if G.has_edge(u, v):
+                deg_sum = G.degree(u) + G.degree(v)
+                prob = edge_prob_scale * deg_sum / (2 * max_deg)
+                if random.random() < min(1.0, prob):
+                    sample.add_edge(u, v)
+
+    if use_cache:
+        _save_sample(sample, filepath)
+        print(f"💾 Degree-Biased семпл сохранён: {filepath.name} (вершин: {sample.number_of_nodes()}, рёбер: {sample.number_of_edges()})")
+
+    return sample
+
 
 # ----------------------------- Универсальная обёртка --------------------------------
 def sample_graph(
@@ -572,6 +662,7 @@ def sample_graph(
         'forest_fire': forest_fire_sampling,
         'random_walk': random_walk_sampling,
         'mhrw': mhrw_sampling,
+        'degree_biased': degree_biased_sampling,
     }
     if method not in methods:
         raise ValueError(f"Неизвестный метод: {method}. Доступны: {list(methods.keys())}")
