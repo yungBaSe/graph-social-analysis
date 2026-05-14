@@ -1,448 +1,320 @@
-# src/embeddings/graph_embeddings.py (обновлённая версия с seed)
-"""
-Модуль для построения эмбеддингов узлов графа.
-Использует gensim для Node2Vec/DeepWalk и чистый PyTorch для GraphSAGE.
-"""
-
-import os
+# src/embeddings/graph_embeddings.py
 import pickle
-import random
+import hashlib
+import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
-
-import numpy as np
-import networkx as nx
+from typing import Dict, Optional, Any
 from tqdm import tqdm
 
-# ----------------------------- Конфигурация -----------------------------
+import networkx as nx
+import numpy as np
+
+from src.data.data_loader import get_dataset
+
+
+# === PATH CONFIGURATION ===
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-MODELS_DIR = PROJECT_ROOT / "models"
-EMBEDDINGS_DIR = PROJECT_ROOT / "data" / "processed" / "embeddings"
-
-MODELS_DIR.mkdir(parents=True, exist_ok=True)
-EMBEDDINGS_DIR.mkdir(parents=True, exist_ok=True)
-
-# ----------------------------- Node2Vec / DeepWalk (через gensim) -----------------------------
-try:
-    from gensim.models import Word2Vec
-    GENSIM_AVAILABLE = True
-except ImportError:
-    GENSIM_AVAILABLE = False
-    print("⚠️ gensim не установлен. Установите: pip install gensim")
+DATA_PROCESSED = PROJECT_ROOT / "data" / "processed"
+DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
 
 
-def generate_random_walks(
-    G: nx.Graph,
-    num_walks: int = 10,
-    walk_length: int = 80,
-    p: float = 1.0,
-    q: float = 1.0,
-    seed: int = 42
-) -> List[List[str]]:
-    """
-    Генерирует случайные блуждания по графу (Node2Vec стиль).
-    """
-    random.seed(seed)
-    np.random.seed(seed)
-    
-    # Приводим к неориентированному
-    if G.is_directed():
-        G = G.to_undirected()
-    
-    nodes = list(G.nodes())
-    walks = []
-    
-    # Предварительно считаем переходные вероятности для Node2Vec
-    if p != 1.0 or q != 1.0:
-        # Строим алиасы для ускорения
-        alias_nodes = {}
-        for node in nodes:
-            neighbors = list(G.neighbors(node))
-            if len(neighbors) > 0:
-                probs = [1.0 / len(neighbors)] * len(neighbors)
-                alias_nodes[node] = _alias_setup(probs)
-            else:
-                alias_nodes[node] = None
-        
-        alias_edges = {}
-        for u, v in G.edges():
-            alias_edges[(u, v)] = _get_alias_edge(G, u, v, p, q)
-            alias_edges[(v, u)] = _get_alias_edge(G, v, u, p, q)
-    else:
-        alias_nodes = None
-        alias_edges = None
-    
-    for _ in tqdm(range(num_walks), desc="Генерация блужданий"):
-        random.shuffle(nodes)
-        for start_node in nodes:
-            if p == 1.0 and q == 1.0:
-                # DeepWalk — просто случайные блуждания
-                walk = [str(start_node)]
-                current = start_node
-                for _ in range(walk_length - 1):
-                    neighbors = list(G.neighbors(current))
-                    if not neighbors:
-                        break
-                    current = random.choice(neighbors)
-                    walk.append(str(current))
-                walks.append(walk)
-            else:
-                # Node2Vec с p и q
-                walk = _node2vec_walk(G, start_node, walk_length, 
-                                      alias_nodes, alias_edges)
-                walks.append([str(n) for n in walk])
-    
-    return walks
+def _get_cache_path(name: str, method: str, dimensions: int, params: dict) -> Path:
+    """Create stable cache key based on all important parameters."""
+    param_str = json.dumps(params, sort_keys=True)
+    key = hashlib.md5(f"{method}_{dimensions}_{param_str}".encode()).hexdigest()[:12]
+    return DATA_PROCESSED / f"{name}_{method}_d{dimensions}_{key}.pkl"
 
 
-def _alias_setup(probs: List[float]) -> Tuple[np.ndarray, np.ndarray]:
-    """Настройка алиас-метода для быстрой дискретной выборки."""
-    K = len(probs)
-    q = np.zeros(K)
-    J = np.zeros(K, dtype=int)
-    
-    smaller = []
-    larger = []
-    for i, prob in enumerate(probs):
-        q[i] = K * prob
-        if q[i] < 1.0:
-            smaller.append(i)
-        else:
-            larger.append(i)
-    
-    while smaller and larger:
-        small = smaller.pop()
-        large = larger.pop()
-        J[small] = large
-        q[large] = q[large] + q[small] - 1.0
-        if q[large] < 1.0:
-            smaller.append(large)
-        else:
-            larger.append(large)
-    
-    return J, q
-
-
-def _alias_draw(J: np.ndarray, q: np.ndarray, K: int) -> int:
-    """Выборка из алиас-таблицы."""
-    kk = int(np.floor(np.random.rand() * K))
-    if np.random.rand() < q[kk]:
-        return kk
-    else:
-        return J[kk]
-
-
-def _get_alias_edge(G: nx.Graph, u: int, v: int, p: float, q: float):
-    """Построение алиас-таблицы для рёбер в Node2Vec."""
-    neighbors = list(G.neighbors(v))
-    probs = []
-    for x in neighbors:
-        if x == u:
-            probs.append(1.0 / p)
-        elif G.has_edge(x, u):
-            probs.append(1.0)
-        else:
-            probs.append(1.0 / q)
-    
-    # Нормализация
-    total = sum(probs)
-    probs = [prob / total for prob in probs]
-    
-    return _alias_setup(probs)
-
-
-def _node2vec_walk(G: nx.Graph, start_node: int, walk_length: int,
-                   alias_nodes: Dict, alias_edges: Dict) -> List[int]:
-    """Одно блуждание Node2Vec."""
-    walk = [start_node]
-    
-    while len(walk) < walk_length:
-        cur = walk[-1]
-        cur_nbrs = list(G.neighbors(cur))
-        if not cur_nbrs:
-            break
-        
-        if len(walk) == 1:
-            # Первый шаг — из стартового узла
-            J, q = alias_nodes[cur]
-            idx = _alias_draw(J, q, len(cur_nbrs))
-            walk.append(cur_nbrs[idx])
-        else:
-            # Последующие шаги — учитываем предыдущий узел
-            prev = walk[-2]
-            J, q = alias_edges[(prev, cur)]
-            idx = _alias_draw(J, q, len(cur_nbrs))
-            walk.append(cur_nbrs[idx])
-    
-    return walk
-
-
-def train_node2vec_gensim(
-    G: nx.Graph,
-    graph_name: str = "graph",
+def node2vec_embeddings(
+    G: nx.Graph | nx.DiGraph,
     dimensions: int = 128,
     walk_length: int = 80,
     num_walks: int = 10,
     p: float = 1.0,
     q: float = 1.0,
     window: int = 10,
-    min_count: int = 1,
-    workers: int = 4,
-    epochs: int = 5,
-    save_model: bool = True,
-    model_name: Optional[str] = None,
-    seed: int = 42  # <-- добавлен параметр seed
-) -> Tuple[Dict[int, np.ndarray], np.ndarray, any]:
-    """
-    Обучает Node2Vec через gensim.models.Word2Vec.
-    """
-    if not GENSIM_AVAILABLE:
-        raise ImportError("gensim не установлен")
-    
-    if model_name is None:
-        model_name = f"{graph_name}_node2vec_d{dimensions}_p{p}_q{q}"
-    
-    emb_path = EMBEDDINGS_DIR / f"{model_name}_embeddings.pkl"
-    model_path = MODELS_DIR / f"{model_name}.model"
-    
-    if emb_path.exists():
-        print(f"📂 Загрузка готовых эмбеддингов из {emb_path}")
-        with open(emb_path, 'rb') as f:
-            data = pickle.load(f)
-        return data['dict'], data['matrix'], None
-    
-    print(f"🚀 Генерация блужданий для Node2Vec...")
-    walks = generate_random_walks(G, num_walks, walk_length, p, q, seed=seed)
-    
-    print(f"🚀 Обучение Word2Vec: dim={dimensions}, window={window}")
+    seed: int = 42,
+) -> Dict[int, np.ndarray]:
+    """Node2Vec embeddings with explicit parameters."""
+    from node2vec import Node2Vec
+
+    node2vec = Node2Vec(
+        G,
+        dimensions=dimensions,
+        walk_length=walk_length,
+        num_walks=num_walks,
+        p=p,
+        q=q,
+        workers=1,
+        seed=seed,
+    )
+    model = node2vec.fit(window=window, min_count=1, batch_words=4)
+    embeddings = {int(node): model.wv[str(node)] for node in G.nodes()}
+    return embeddings
+
+
+def random_walk_embeddings(
+    G: nx.Graph | nx.DiGraph,
+    dimensions: int = 128,
+    walk_length: int = 80,
+    num_walks: int = 10,
+    window: int = 10,
+    seed: int = 42,
+) -> Dict[int, np.ndarray]:
+    """Simple DeepWalk-style random walk embeddings."""
+    import random
+    from gensim.models import Word2Vec
+
+    random.seed(seed)
+    nodes = list(G.nodes())
+    walks = []
+
+    for _ in tqdm(range(num_walks), desc="Generating walks", leave=False):
+        for node in nodes:
+            walk = [node]
+            current = node
+            for _ in range(walk_length - 1):
+                neighbors = list(G.neighbors(current))
+                if not neighbors:
+                    break
+                current = random.choice(neighbors)
+                walk.append(current)
+            walks.append([str(n) for n in walk])
+
     model = Word2Vec(
-        sentences=walks,
+        walks,
         vector_size=dimensions,
         window=window,
-        min_count=min_count,
-        sg=1,  # Skip-gram
-        workers=workers,
-        epochs=epochs,
-        seed=seed  # <-- seed для Word2Vec
+        min_count=1,
+        sg=1,
+        workers=1,
+        seed=seed,
     )
-    
-    # Извлекаем эмбеддинги
-    np.random.seed(seed)
-    embeddings_dict = {}
-    for node in G.nodes():
-        node_str = str(node)
-        if node_str in model.wv:
-            embeddings_dict[node] = model.wv[node_str]
-        else:
-            # Для изолированных узлов — случайный вектор
-            embeddings_dict[node] = np.random.randn(dimensions) * 0.01
-    
-    nodes_order = list(G.nodes())
-    embeddings_matrix = np.array([embeddings_dict[n] for n in nodes_order])
-    
-    if save_model:
-        model.save(str(model_path))
-        with open(emb_path, 'wb') as f:
-            pickle.dump({'dict': embeddings_dict, 'matrix': embeddings_matrix}, f)
-        print(f"💾 Модель и эмбеддинги сохранены: {model_name}")
-    
-    return embeddings_dict, embeddings_matrix, model
+    embeddings = {int(node): model.wv[str(node)] for node in G.nodes() if str(node) in model.wv}
+    return embeddings
 
+def grace_embeddings(
+    G: nx.Graph | nx.DiGraph,
+    dimensions: int = 128,
+    epochs: int = 200,
+    lr: float = 1e-3,
+    seed: int = 42,
+) -> Dict[int, np.ndarray]:
+    """
+    Self-supervised эмбеддинги методом GRACE.
+    """
+    import torch
+    import torch.nn.functional as F
+    from torch_geometric.nn import GCNConv
+    from torch_geometric.data import Data
+    from torch_geometric.utils import to_undirected
 
-def train_deepwalk_gensim(G: nx.Graph, graph_name: str = "graph", **kwargs) -> Tuple:
-    """DeepWalk = Node2Vec с p=1, q=1."""
-    kwargs['p'] = 1.0
-    kwargs['q'] = 1.0
-    return train_node2vec_gensim(G, graph_name, **kwargs)
+    # Подготовка данных
+    G_u = G.to_undirected() if isinstance(G, nx.DiGraph) else G
+    nodes = list(G_u.nodes())
+    node_to_idx = {node: i for i, node in enumerate(nodes)}
+    edge_index = torch.tensor(
+        [[node_to_idx[u], node_to_idx[v]] for u, v in G_u.edges()],
+        dtype=torch.long
+    ).t().contiguous() if G_u.number_of_edges() > 0 else torch.zeros((2, 0), dtype=torch.long)
 
+    # Если есть фичи, используем их; иначе — единичную матрицу
+    if hasattr(G_u, 'features') and G_u.features is not None:
+        x = torch.tensor(G_u.features, dtype=torch.float32)
+    else:
+        x = torch.eye(len(nodes), dtype=torch.float32)
 
-# ----------------------------- GraphSAGE (чистый PyTorch) -----------------------------
-# Отложенный импорт PyTorch — только при реальном вызове функции
-TORCH_AVAILABLE = False
-_IMPORT_ERROR_MSG = None
+    data = Data(x=x, edge_index=to_undirected(edge_index))
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    data = data.to(device)
 
-try:
+    class GRACE(torch.nn.Module):
+        def __init__(self, in_dim, hidden_dim, out_dim):
+            super().__init__()
+            self.encoder = torch.nn.ModuleList([
+                GCNConv(in_dim, hidden_dim),
+                GCNConv(hidden_dim, out_dim)
+            ])
+        def forward(self, x, edge_index):
+            h = F.relu(self.encoder[0](x, edge_index))
+            return self.encoder[1](h, edge_index)
+
+    model = GRACE(x.size(1), dimensions, dimensions).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    # Функция InfoNCE
+    def info_nce(z1, z2, tau=0.2):
+        z1 = F.normalize(z1, dim=1)
+        z2 = F.normalize(z2, dim=1)
+        sim = torch.mm(z1, z2.t()) / tau
+        labels = torch.arange(sim.size(0)).to(sim.device)
+        loss = F.cross_entropy(sim, labels)
+        return loss
+
+    for epoch in range(epochs):
+        model.train()
+        optimizer.zero_grad()
+        # Два варианта с дропаутом
+        z1 = model(data.x, data.edge_index)
+        z2 = model(data.x, data.edge_index)
+        loss = info_nce(z1, z2)
+        loss.backward()
+        optimizer.step()
+
+    model.eval()
+    with torch.no_grad():
+        z = model(data.x, data.edge_index).cpu().numpy()
+    embeddings = {node: z[i] for i, node in enumerate(nodes)}
+    return embeddings
+
+def dgi_embeddings(
+    G: nx.Graph | nx.DiGraph,
+    dimensions: int = 128,
+    epochs: int = 200,
+    lr: float = 1e-3,
+    seed: int = 42,
+) -> Dict[int, np.ndarray]:
+    """
+    Self-supervised эмбеддинги методом Deep Graph Infomax (DGI).
+    """
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
-    from torch.utils.data import DataLoader, Dataset
-    TORCH_AVAILABLE = True
-except ImportError as e:
-    _IMPORT_ERROR_MSG = str(e)
-    print(f"⚠️ PyTorch не установлен или повреждён. GraphSAGE будет недоступен. Ошибка: {e}")
-except AttributeError as e:
-    _IMPORT_ERROR_MSG = str(e)
-    print(f"⚠️ PyTorch повреждён (циклический импорт). Переустановите: pip uninstall torch -y && pip install torch")
-except Exception as e:
-    _IMPORT_ERROR_MSG = str(e)
-    print(f"⚠️ Неизвестная ошибка при импорте PyTorch: {e}")
+    import random
+    from torch_geometric.nn import GCNConv, DeepGraphInfomax
+    from torch_geometric.data import Data
+    from torch_geometric.utils import to_undirected
 
-
-class GraphSAGEModel:
-    """Заглушка для GraphSAGE (реальная модель создаётся только при TORCH_AVAILABLE=True)."""
-    pass
-
-def train_graphsage_torch(
-    G: nx.Graph,
-    graph_name: str = "graph",
-    dimensions: int = 128,
-    hidden_dims: List[int] = [256, 256],
-    epochs: int = 50,
-    lr: float = 0.001,
-    device: str = 'cpu',
-    save_model: bool = True,
-    model_name: Optional[str] = None,
-    seed: int = 42
-) -> Tuple[Dict[int, np.ndarray], np.ndarray, any]:
-    """
-    Обучает GraphSAGE на задаче восстановления связей (link prediction).
-    """
-    if not TORCH_AVAILABLE:
-        raise ImportError(
-            f"PyTorch не доступен. GraphSAGE нельзя использовать.\n"
-            f"Причина: {_IMPORT_ERROR_MSG}\n"
-            f"Установите PyTorch: pip install torch"
-        )
-    
-    # Реальная реализация GraphSAGE (выполнится только если TORCH_AVAILABLE=True)
-    # Устанавливаем сиды для воспроизводимости
-    random.seed(seed)
-    np.random.seed(seed)
     torch.manual_seed(seed)
-    
-    if model_name is None:
-        model_name = f"{graph_name}_graphsage_d{dimensions}_h{'-'.join(map(str,hidden_dims))}"
-    
-    emb_path = EMBEDDINGS_DIR / f"{model_name}_embeddings.pkl"
-    if emb_path.exists():
-        print(f"📂 Загрузка готовых эмбеддингов из {emb_path}")
-        with open(emb_path, 'rb') as f:
-            data = pickle.load(f)
-        return data['dict'], data['matrix'], None
-    
-    # Приводим к неориентированному
-    if G.is_directed():
-        G = G.to_undirected()
-    
-    nodes = list(G.nodes())
-    n_nodes = len(nodes)
-    node_to_idx = {n: i for i, n in enumerate(nodes)}
-    
-    # Матрица смежности
-    adj = nx.to_numpy_array(G)
-    adj = torch.FloatTensor(adj).to(device)
-    
-    # Признаки узлов — one-hot или degree
-    degrees = np.array([G.degree(n) for n in nodes])
-    max_deg = degrees.max()
-    features = np.zeros((n_nodes, max_deg + 1))
-    features[np.arange(n_nodes), degrees] = 1.0
-    features = torch.FloatTensor(features).to(device)
-    
-    # Определяем класс модели внутри функции, чтобы избежать проблем с отсутствием torch.nn
-    class _GraphSAGEModel(nn.Module):
-        def __init__(self, in_feats: int, hidden_feats: List[int], out_feats: int):
+    np.random.seed(seed)
+    random.seed(seed)
+
+    G_u = G.to_undirected() if isinstance(G, nx.DiGraph) else G
+    nodes = list(G_u.nodes())
+    node_to_idx = {node: i for i, node in enumerate(nodes)}
+    edge_index = torch.tensor(
+        [[node_to_idx[u], node_to_idx[v]] for u, v in G_u.edges()],
+        dtype=torch.long
+    ).t().contiguous() if G_u.number_of_edges() > 0 else torch.zeros((2, 0), dtype=torch.long)
+
+    x = torch.tensor(G_u.features if hasattr(G_u, 'features') else np.eye(len(nodes)), dtype=torch.float32)
+    data = Data(x=x, edge_index=to_undirected(edge_index))
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    data = data.to(device)
+
+    class Encoder(nn.Module):
+        def __init__(self, in_dim, hidden_dim, out_dim):
             super().__init__()
-            self.layers = nn.ModuleList()
-            
-            self.layers.append(self._make_layer(in_feats, hidden_feats[0]))
-            
-            # Скрытые слои
-            for i in range(len(hidden_feats) - 1):
-                self.layers.append(self._make_layer(hidden_feats[i], hidden_feats[i+1]))
-            
-            self.out_layer = nn.Linear(hidden_feats[-1], out_feats)
-        
-        def _make_layer(self, in_dim: int, out_dim: int):
-            """Слой с агрегацией соседей (конкатенация -> удвоение размерности)."""
-            return nn.Sequential(
-                nn.Linear(in_dim * 2, out_dim),
-                nn.ReLU(),
-                nn.BatchNorm1d(out_dim)
-            )
-        
-        def forward(self, x: torch.Tensor, adj: torch.Tensor) -> torch.Tensor:
-            for layer in self.layers:
-                neighbor_agg = torch.mm(adj, x) / (adj.sum(dim=1, keepdim=True) + 1e-10)
-                combined = torch.cat([x, neighbor_agg], dim=1)
-                x = layer(combined)
-            
-            # Выходной слой без агрегации соседей
-            return self.out_layer(x)
-    
-    model = _GraphSAGEModel(
-        in_feats=features.shape[1],
-        hidden_feats=hidden_dims,
-        out_feats=dimensions
+            self.conv1 = GCNConv(in_dim, hidden_dim)
+            self.conv2 = GCNConv(hidden_dim, out_dim)
+        def forward(self, x, edge_index):
+            x = F.relu(self.conv1(x, edge_index))
+            return self.conv2(x, edge_index)
+
+    def corruption(x, edge_index):
+        return x[torch.randperm(x.size(0))], edge_index
+
+    encoder = Encoder(data.x.size(1), dimensions, dimensions).to(device)
+    model = DeepGraphInfomax(
+        hidden_channels=dimensions,
+        encoder=encoder,
+        summary=lambda z, *args, **kwargs: torch.sigmoid(z.mean(dim=0)),
+        corruption=corruption
     ).to(device)
-    model.max_deg = max_deg
-    
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    
-    edges = list(G.edges())
-    non_edges = list(nx.non_edges(G))
-    
-    print(f"🚀 Обучение GraphSAGE: {epochs} эпох")
+
     model.train()
-    
     for epoch in range(epochs):
-        pos_sample = random.sample(edges, min(len(edges), 1024))
-        neg_sample = random.sample(non_edges, len(pos_sample))
-        
         optimizer.zero_grad()
-        emb = model(features, adj)
-        
-        pos_scores = (emb[[node_to_idx[u] for u, _ in pos_sample]] * 
-                      emb[[node_to_idx[v] for _, v in pos_sample]]).sum(dim=1)
-        neg_scores = (emb[[node_to_idx[u] for u, _ in neg_sample]] * 
-                      emb[[node_to_idx[v] for _, v in neg_sample]]).sum(dim=1)
-        
-        loss = -torch.log(torch.sigmoid(pos_scores) + 1e-10).mean() - \
-                torch.log(1 - torch.sigmoid(neg_scores) + 1e-10).mean()
-        
+        pos_z, neg_z, summary = model(data.x, data.edge_index)
+        loss = model.loss(pos_z, neg_z, summary)
         loss.backward()
         optimizer.step()
-        
-        if (epoch + 1) % 10 == 0:
-            print(f"  Epoch {epoch+1}/{epochs}, Loss: {loss.item():.4f}")
-    
+
     model.eval()
     with torch.no_grad():
-        embeddings_matrix = model(features, adj).cpu().numpy()
-    
-    embeddings_dict = {nodes[i]: embeddings_matrix[i] for i in range(n_nodes)}
-    
-    if save_model:
-        torch.save({
-            'model_state_dict': model.state_dict(),
-            'max_deg': max_deg
-        }, MODELS_DIR / f"{model_name}.pt")
-        with open(emb_path, 'wb') as f:
-            pickle.dump({'dict': embeddings_dict, 'matrix': embeddings_matrix}, f)
-        print(f"💾 Модель и эмбеддинги сохранены: {model_name}")
-    
-    return embeddings_dict, embeddings_matrix, model
+        z = encoder(data.x, data.edge_index).cpu().detach().numpy()
+    embeddings = {node: z[i] for i, node in enumerate(nodes)}
+    return embeddings
 
 
-# ----------------------------- Универсальная обёртка ----------------------------
-def get_embeddings(
-    G: nx.Graph,
-    graph_name: str = "graph",
-    method: str = 'node2vec',
-    **params
-) -> Tuple[Dict[int, np.ndarray], np.ndarray, any]:
-    """
-    Универсальная функция для получения эмбеддингов.
-    
-    Параметры
-    ---------
-    method : {'node2vec', 'deepwalk', 'graphsage'}
-    """
-    if method.lower() == 'node2vec':
-        return train_node2vec_gensim(G, graph_name=graph_name, **params)
-    elif method.lower() == 'deepwalk':
-        return train_deepwalk_gensim(G, graph_name=graph_name, **params)
-    elif method.lower() == 'graphsage':
-        return train_graphsage_torch(G, graph_name=graph_name, **params)
+def compute_embeddings(
+    G: nx.Graph | nx.DiGraph,
+    method: str = "node2vec",
+    dimensions: int = 128,
+    name: Optional[str] = None,
+    seed: int = 42,
+    **kwargs,
+) -> Dict[int, np.ndarray]:
+    """Main function. Compute embeddings for any graph."""
+    if name:
+        cache_path = _get_cache_path(name, method, dimensions, kwargs)
+        if cache_path.exists():
+            with open(cache_path, 'rb') as f:
+                return pickle.load(f)
+
+    if method == "node2vec":
+        embeddings = node2vec_embeddings(
+            G, dimensions=dimensions, seed=seed, **kwargs
+        )
+    elif method == "random_walk":
+        embeddings = random_walk_embeddings(
+            G, dimensions=dimensions, seed=seed, **kwargs
+        )
+    elif method == "grace":
+        embeddings = grace_embeddings(G, dimensions=dimensions, seed=seed, **kwargs)
+    elif method == "dgi":
+        embeddings = dgi_embeddings(G, dimensions=dimensions, seed=seed, **kwargs)
     else:
-        raise ValueError(f"Неизвестный метод: {method}")
+        raise ValueError(f"Unknown embedding method: {method}. Use 'node2vec' or 'random_walk'.")
+
+    if name:
+        cache_path = _get_cache_path(name, method, dimensions, kwargs)
+        with open(cache_path, 'wb') as f:
+            pickle.dump(embeddings, f)
+        print(f"✅ Embeddings cached: {name} | {method} | dim={dimensions}")
+
+    return embeddings
+
+
+def compute_dataset_embeddings(
+    name: str,
+    method: str = "node2vec",
+    dimensions: int = 128,
+    seed: int = 42,
+    **kwargs,
+) -> Dict[int, np.ndarray]:
+    """Convenience wrapper for dataset by name."""
+    dataset = get_dataset(name, verbose=False)
+    G = dataset["graph"]
+    return compute_embeddings(
+        G=G,
+        method=method,
+        dimensions=dimensions,
+        name=name,
+        seed=seed,
+        **kwargs,
+    )
+
+
+def load_embeddings(
+    name: str,
+    method: str = "node2vec",
+    dimensions: int = 128,
+    seed: int = 42,
+    **kwargs,
+) -> Dict[int, np.ndarray]:
+    """Load cached embeddings."""
+    cache_path = _get_cache_path(name, method, dimensions, kwargs)
+    if cache_path.exists():
+        with open(cache_path, 'rb') as f:
+            return pickle.load(f)
+    raise FileNotFoundError(f"No cached embeddings for {name}")
+
+
+def list_cached_embeddings() -> None:
+    """List all cached embedding files."""
+    files = sorted(DATA_PROCESSED.glob("*_d*_*.pkl"))
+    print(f"Found {len(files)} cached embedding files:")
+    for f in files:
+        print(f"  • {f.name}")

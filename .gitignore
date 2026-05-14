@@ -7,11 +7,10 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Data and models
-data/raw/*
-data/processed/*
-data/extracted/*
-models/*
-figures/*
+/data/
+/models/
+figures/
+results/
 
 # Virtual environment
 venv/
@@ -34,6 +33,3 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
-
-# Keep empty directories
-!.gitkeep
