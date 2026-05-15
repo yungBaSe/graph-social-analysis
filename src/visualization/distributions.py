@@ -40,9 +40,10 @@ def plot_degree_distribution(
     axs[1].set_ylabel("Count (log)")
 
     plt.tight_layout()
-    plt.show()
     plt.close(fig)
-    # show_and_save(fig, name, "degree_distribution", show=show, save=save)
+
+    show_and_save(fig, name, "degree_distribution", show=show, save=save)
+
     return fig
 
 
@@ -66,8 +67,10 @@ def plot_clustering_distribution(
     ax.set_ylabel("Frequency")
 
     plt.tight_layout()
-    plt.show()
     plt.close(fig)
+
+    show_and_save(fig, name, "clustering_distribution", show=show, save=save)
+    
     return fig
 
 

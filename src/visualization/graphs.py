@@ -32,8 +32,10 @@ def plot_degree_rank(
     ax.grid(True, which="both", alpha=0.3)
 
     plt.tight_layout()
-    plt.show()
     plt.close(fig)
+
+    show_and_save(fig, name, "degree_rank", show=show, save=save)
+
     return fig
 
 
@@ -102,8 +104,10 @@ def plot_ego_network(
     ax.axis('off')
 
     plt.tight_layout()
-    plt.show()
     plt.close(fig)
+
+    show_and_save(fig, name, "ego_network", show=show, save=save)
+
     return fig
 
 
@@ -159,8 +163,10 @@ def plot_communities_on_graph(
     ax.axis('off')
 
     plt.tight_layout()
-    plt.show()
     plt.close(fig)
+
+    show_and_save(fig, name, "communities", show=show, save=save)
+
     return fig
 
 
