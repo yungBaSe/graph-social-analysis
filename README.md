@@ -33,6 +33,7 @@ pip install -r requirements.txt
 - `data/processed/` — кешированные графы, эмбеддинги, метрики
 - `data/extracted/` — распакованные файлы из ZIP-архивов
 - `figures/` — сохранённые визуализации
+- `results/` — все результаты исследований
 
 # Запуск
 
