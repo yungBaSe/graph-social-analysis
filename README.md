@@ -33,9 +33,16 @@ pip install -r requirements.txt
 - `data/processed/` — кешированные графы, эмбеддинги, метрики
 - `data/extracted/` — распакованные файлы из ZIP-архивов
 - `figures/` — сохранённые визуализации
-- `results/` — все результаты исследований
 
 # Запуск
+
+Ноутбуки можно запустить вручную, также можно использовать `jupyter`.
+
+## Установка
+
+```bash
+pip install jupyter
+```
 
 ## Проверка базового функционала
 
@@ -43,7 +50,7 @@ pip install -r requirements.txt
 jupyter notebook notebooks/demo/
 ```
 
-## Интерактивный режим
+## Запуск основных ноутбуков
 
 ```bash
 jupyter notebook notebooks/
