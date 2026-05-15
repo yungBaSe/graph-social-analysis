@@ -50,7 +50,7 @@ pip install jupyter
 jupyter notebook notebooks/demo/
 ```
 
-## Интерактивный режим
+## Запуск основных ноутбуков
 
 ```bash
 jupyter notebook notebooks/
