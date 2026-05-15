@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from scipy import sparse as sp
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.feature_selection import VarianceThreshold
 

@@ -6,20 +6,9 @@ from sklearn.metrics import accuracy_score, f1_score
 from typing import Dict, Any
 import numpy as np
 
-from .base import BaseTrainer
-from ..utils import set_seed
-
-
-# Обновлённый NodeClassificationTrainer с поддержкой балансировки
-import torch
-import torch.nn.functional as F
-from torch_geometric.data import Data
-from sklearn.metrics import accuracy_score, f1_score
-from typing import Dict, Any
-import numpy as np
-
 from src.models.trainers.base import BaseTrainer
 from src.models.utils import set_seed
+
 
 class NodeClassificationTrainer(BaseTrainer):
     """Trainer для Node Classification с опциональной балансировкой классов."""

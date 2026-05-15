@@ -6,6 +6,10 @@ from collections import defaultdict, Counter
 from sklearn.metrics import normalized_mutual_info_score, adjusted_rand_score
 from sklearn.cluster import SpectralClustering, KMeans
 import community as community_louvain
+import torch
+from torch_geometric.nn import DMoNPooling
+from torch_geometric.utils import to_undirected, to_dense_adj, to_dense_batch
+from torch_geometric.data import Data, Batch
 
 def overlapping_to_hard_labels(circles: Dict[int, Dict[str, List[int]]]) -> Dict[int, int]:
     """
@@ -93,23 +97,12 @@ def run_kmeans_emb(embeddings: Dict[int, np.ndarray], n_clusters: int, random_st
     kmeans = KMeans(n_clusters=n_clusters, random_state=random_state).fit(X)
     return {node: kmeans.labels_[i] for i, node in enumerate(nodes)}
 
-import networkx as nx
-from typing import Dict
-import torch
-from torch_geometric.nn import DMoNPooling
-from torch_geometric.utils import to_undirected, to_dense_adj, to_dense_batch
-from torch_geometric.data import Data, Batch
-
 def run_dmon(G: nx.Graph, dimensions: int = 128, epochs: int = 200,
              lr: float = 1e-3, seed: int = 42, n_clusters: Optional[int] = None) -> Dict[int, int]:
-    try:
-        import torch
-        from torch_geometric.nn import DMoNPooling
-        from torch_geometric.utils import to_undirected, to_dense_adj, to_dense_batch
-        from torch_geometric.data import Data, Batch
-    except ImportError:
-        print("PyG не установлен. DMoN недоступен.")
-        return {}
+    import torch
+    from torch_geometric.nn import DMoNPooling
+    from torch_geometric.utils import to_undirected, to_dense_adj, to_dense_batch
+    from torch_geometric.data import Data, Batch
 
     # 1. Фиксируем seed для воспроизводимости
     torch.manual_seed(seed)

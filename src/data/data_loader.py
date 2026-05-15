@@ -251,7 +251,7 @@ def load_labels_from_csv(path: Path, index_col=0) -> pd.DataFrame:
 
 
 # ------------------------------------------------------------
-#  Ego-сети Facebook / Twitter
+#  Ego-сети Facebook
 # ------------------------------------------------------------
 def parse_ego_edges(filepath) -> nx.Graph:
     G = nx.Graph()
@@ -309,7 +309,6 @@ def load_ego_network(info: dict) -> dict:
     """Загружает ego-сеть: граф может быть из combined-файла, фичи/круги из архива."""
     # --- Загрузка графа ---
     if "combined_url" in info:
-        # Используем комбинированный граф (например, Facebook)
         download_file(info["combined_url"], DATA_RAW / info["combined_filename"])
         combined_path = DATA_RAW / info["combined_filename"]
         G = nx.Graph()  # Facebook неориентированный
@@ -322,7 +321,6 @@ def load_ego_network(info: dict) -> dict:
                     u, v = int(parts[0]), int(parts[1])
                     G.add_edge(u, v)
     else:
-        # Только из архива (Twitter)
         G = nx.DiGraph() if info.get("is_directed", False) else nx.Graph()
 
     # --- Фичи и круги из архива ---
